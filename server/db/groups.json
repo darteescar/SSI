@@ -1,0 +1,14 @@
+{
+  "next_id": 2,
+  "1": {
+    "name": "Gru1",
+    "members": [
+      1
+    ],
+    "owner": 1,
+    "invited": [
+      2,
+      3
+    ]
+  }
+}
