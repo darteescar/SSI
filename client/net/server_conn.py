@@ -1,12 +1,11 @@
-"""ServerConnection — camada de comunicação com o servidor.
+"""ServerConnection — API de comunicação com o servidor.
 
 Responsabilidades:
-- Estabelecer e terminar a ligação TCP + handshake DH
-- Cifrar/decifrar mensagens (via SecureChannel)
-- Demultiplexar mensagens recebidas por tag (via Demultiplexer)
-- Expor send() / receive(tag) / send_ack() / send_async()
+- Estabelecer e terminar a ligação TCP + handshake DH inicial
+- Expor send() / receive(tag) como interface bloqueante para MessagingService
+- Expor send_ack() / send_async() para envios fire-and-forget
 
-NÃO sabe nada de: utilizadores, E2E, grupos, prekeys.
+NÃO sabe nada de: utilizadores, E2E, grupos, prekeys, rekey, cifra.
 """
 
 import logging
@@ -21,7 +20,7 @@ sys.path.insert(0, _PROJECT_DIR)
 from common.Message import Message
 from common.transport import Transport
 from net.secure_channel import SecureChannel
-from net.demultiplexer import Demultiplexer, TAG_RESPONSE
+from net.connection import ConnectionActor, TAG_RESPONSE, TAG_E2E, TAG_CHAT, TAG_GROUP_EVT
 
 _LOG_PATH = os.path.join(_CLIENT_DIR, "e2e.log")
 _fmt = logging.Formatter(
@@ -64,77 +63,77 @@ SERVER_CERT_PATH = os.path.join(_DATA_DIR, "ca", "server.crt")
 
 
 class ServerConnection:
-    """Canal seguro com o servidor + demultiplexação de mensagens."""
+    """Canal seguro com o servidor.
+
+    Delega cifra ao SecureChannel e coordenação de threads ao ConnectionActor.
+    Expõe apenas send/receive para as camadas superiores.
+    """
 
     def __init__(self):
-        self._transport:     Transport      | None = None
-        self._channel:       SecureChannel  | None = None
-        self._demux:         Demultiplexer  | None = None
-        self.gx_bytes: bytes | None = None
-        self.gy_bytes: bytes | None = None
+        self._transport: Transport      | None = None
+        self._channel:   SecureChannel  | None = None
+        self._actor:     ConnectionActor | None = None
+        self.gx_bytes:   bytes | None = None
+        self.gy_bytes:   bytes | None = None
+        self.username:   str   | None = None
 
     # ── Ligação ───────────────────────────────────────────────────────────────
 
     def connect(self) -> None:
         self._transport = Transport.connect(HOST, PORT)
         self._channel   = SecureChannel(self._transport, SERVER_CERT_PATH)
-        gx, gy = self._channel.dh_handshake()
-        self.gx_bytes = gx
-        self.gy_bytes = gy
-        self._demux = Demultiplexer(self._channel)
-        self._demux._init_async_tracking()
-        self._demux.start()
+        gx, gy          = self._channel.dh_handshake()
+        self.gx_bytes   = gx
+        self.gy_bytes   = gy
+        self._actor     = ConnectionActor(self._channel)
+        self._actor.start()
 
     def disconnect(self) -> None:
-        if self._demux:
-            self._demux.close()
-        if self._channel:
-            self._channel.disconnect()
+        if self._actor:
+            self._actor.close()
         self._transport = None
         self._channel   = None
-        self._demux     = None
+        self._actor     = None
         self.gx_bytes   = None
         self.gy_bytes   = None
+        self.username   = None
         set_logger_user(None)
 
     def is_connected(self) -> bool:
         return self._transport is not None and self._transport.socket is not None
 
     @property
-    def dh_shared(self):
+    def dh_shared(self) -> bytes | None:
         return self._channel.dh_shared if self._channel else None
 
     # ── Envio / Recepção ──────────────────────────────────────────────────────
 
-    def send(self, msg: Message) -> None:
-        if not self._channel:
-            raise RuntimeError("Sem canal seguro.")
-        self._channel.check_rekey()
-        self._demux.send(msg)
+    def send(self, msg: Message) -> Message | None:
+        """Envia msg e bloqueia até receber a resposta síncrona."""
+        if not self._actor:
+            raise RuntimeError("Sem ligação.")
+        return self._actor.request(msg)
 
     def receive(self, tag: int = TAG_RESPONSE) -> Message | None:
-        if not self._demux:
+        """Bloqueia até haver uma mensagem push na fila da tag dada."""
+        if not self._actor:
             return None
-        return self._demux.receive(tag)
+        return self._actor.receive_push(tag)
 
     def send_ack(self, msg: Message) -> None:
-        """Envia ACK sem triggering de rekey (chamado da receive thread)."""
-        if not self._channel or self._channel.is_rekeying:
+        """Envia ACK sem esperar resposta (chamado da receive thread)."""
+        if not self._actor:
             return
         try:
-            self._demux.send(msg)
+            self._actor.push_send(msg)
         except OSError:
             pass
 
     def send_async(self, msg: Message) -> None:
-        """Envia mensagem da receive thread; regista msg_id para descartar o OK."""
-        if not self._channel or self._channel.is_rekeying:
+        """Envia mensagem fire-and-forget (dh_resp, sk_dist)."""
+        if not self._actor:
             return
-        mid = msg.get("msg_id") or (msg.payload.get("msg_id") if hasattr(msg, "payload") else None)
-        if mid:
-            self._demux.register_async_id(str(mid))
         try:
-            self._demux.send(msg)
+            self._actor.push_send(msg)
         except OSError:
-            if mid:
-                self._demux._discard_async(str(mid))
+            pass

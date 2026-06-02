@@ -12,7 +12,6 @@ sys.path.insert(0, _PROJECT_DIR)
 from common.Message import Message
 from common.MsgType import MsgType
 from crypto.e2e_session import E2EManager
-from net.demultiplexer import TAG_RESPONSE
 
 _log = logging.getLogger("e2e")
 
@@ -23,7 +22,7 @@ class E2ELayer:
     def __init__(self, conn, keystore):
         self._conn     = conn      # ServerConnection
         self._keystore = keystore  # Keystore
-        self._mgr      = E2EManager(keystore, conn.__class__.__module__)  # substituído no init real
+        self._mgr      = E2EManager(keystore, conn.__class__.__module__)
         self._dh_resp_events: dict[str, threading.Event]       = {}
         self._pending_e2e:    dict[str, list[tuple[str, str]]] = {}
 
@@ -31,7 +30,6 @@ class E2ELayer:
         self.on_message: Callable[[str, str, str, str], None] | None = None
 
     def init(self, server_cert_path: str) -> None:
-        """Chamado após construção para injectar o caminho do certificado do servidor."""
         self._mgr = E2EManager(self._keystore, server_cert_path)
 
     def set_privkey(self, privkey) -> None:
@@ -46,8 +44,7 @@ class E2ELayer:
 
     def generate_and_upload_prekeys(self) -> None:
         payload = self._mgr.generate_prekeys_payload()
-        self._conn.send(Message.req_prekey_upload(payload))
-        resp = self._conn.receive(TAG_RESPONSE)
+        resp = self._conn.send(Message.req_prekey_upload(payload))
         if not resp or resp.type != MsgType.OK:
             _log.warning("falha ao fazer upload de prekeys — E2E offline pode não funcionar")
 
@@ -57,11 +54,9 @@ class E2ELayer:
         return self._mgr.has_session(target)
 
     def ensure_session(self, target: str) -> tuple[bool, str]:
-        """Garante sessão E2E com target. Devolve (ok, erro)."""
         if self._mgr.has_session(target):
             return True, ""
-        self._conn.send(Message.req_prekey_request(target))
-        bundle = self._conn.receive(TAG_RESPONSE)
+        bundle = self._conn.send(Message.req_prekey_request(target))
         if bundle is None:
             return False, "Ligação perdida."
         if bundle.type == MsgType.ERROR:
@@ -85,8 +80,7 @@ class E2ELayer:
         ev = threading.Event()
         self._dh_resp_events[target] = ev
         msg_id = self._mgr.new_msg_id()
-        self._conn.send(Message.req_e2e_msg(target, msg_id, dh_payload))
-        ack = self._conn.receive(TAG_RESPONSE)
+        ack = self._conn.send(Message.req_e2e_msg(target, msg_id, dh_payload))
         if ack is None or ack.type == MsgType.ERROR:
             self._dh_resp_events.pop(target, None)
             return False
@@ -101,20 +95,17 @@ class E2ELayer:
         if init_payload is None:
             return False
         msg_id = self._mgr.new_msg_id()
-        self._conn.send(Message.req_e2e_msg(target, msg_id, init_payload))
-        ack = self._conn.receive(TAG_RESPONSE)
+        ack = self._conn.send(Message.req_e2e_msg(target, msg_id, init_payload))
         return ack is not None and ack.type != MsgType.ERROR
 
     # ── Envio / Recepção de mensagens ─────────────────────────────────────────
 
     def send_message(self, target: str, text: str) -> tuple[bool, str]:
-        """Cifra e envia mensagem E2E. Devolve (ok, erro)."""
         payload_b64 = self._mgr.send_message(target, text)
         if payload_b64 is None:
             return False, "Falha ao cifrar mensagem."
         msg_id = self._mgr.new_msg_id()
-        self._conn.send(Message.req_e2e_msg(target, msg_id, payload_b64))
-        ack = self._conn.receive(TAG_RESPONSE)
+        ack = self._conn.send(Message.req_e2e_msg(target, msg_id, payload_b64))
         if ack is None:
             return False, "Ligação perdida."
         if ack.type == MsgType.ERROR:
@@ -124,7 +115,6 @@ class E2ELayer:
     # ── Handlers de mensagens push (chamados pelo MessagingService) ───────────
 
     def handle_deliver(self, msg: Message) -> None:
-        """Processa E2E_DELIVER recebido da receive thread."""
         sender      = msg.from_ or "Desconhecido"
         msg_id      = msg.e2e_msg_id
         payload_b64 = msg.payload_b64
@@ -161,7 +151,6 @@ class E2ELayer:
             self._conn.send_ack(Message.req_e2e_ack(msg_id))
             return
 
-        # mensagem de texto normal
         if not self._mgr.has_session(sender):
             self._pending_e2e.setdefault(sender, []).append((msg_id, payload_b64))
             return
@@ -186,7 +175,7 @@ class E2ELayer:
         if self.on_message:
             self.on_message(sender, me, text, ts)
 
-    # ── Acesso ao manager (para GroupLayer usar new_msg_id) ───────────────────
+    # ── Acesso ao manager ─────────────────────────────────────────────────────
 
     def new_msg_id(self) -> str:
         return self._mgr.new_msg_id()

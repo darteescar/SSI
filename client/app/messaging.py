@@ -3,6 +3,11 @@
 Cada método público que comunica com o servidor é bloqueante e pensado para
 ser chamado via run_in_executor, i.e., numa thread separada do asyncio loop.
 O acesso à UI é serializado pelo ui_lock passado no construtor.
+
+Nota sobre send():
+  ServerConnection.send(msg) envia e bloqueia até receber a resposta síncrona.
+  Já não existe um receive(TAG_RESPONSE) separado — a resposta é o valor de retorno.
+  receive(tag) continua a existir apenas para as filas de push (TAG_E2E, TAG_CHAT, …).
 """
 
 import logging
@@ -19,7 +24,7 @@ sys.path.insert(0, _PROJECT_DIR)
 
 from common.Message import Message
 from common.MsgType import MsgType
-from net.demultiplexer import TAG_E2E, TAG_CHAT, TAG_GROUP_EVT, TAG_RESPONSE
+from net.connection import TAG_E2E, TAG_CHAT, TAG_GROUP_EVT
 from net.server_conn import ServerConnection, SERVER_CERT_PATH, set_logger_user
 from crypto.keystore import Keystore
 from crypto.e2e import E2ELayer
@@ -166,9 +171,8 @@ class MessagingService:
             self._keystore.set_user("")
             return False, "Username ou password inválidos."
 
-        sig = crypto.rsa_sign(privkey, self._conn.gx_bytes + self._conn.gy_bytes)
-        self._conn.send(Message.req_login_sts(username, password, sig))
-        resp = self._conn.receive(TAG_RESPONSE)
+        sig  = crypto.rsa_sign(privkey, self._conn.gx_bytes + self._conn.gy_bytes)
+        resp = self._conn.send(Message.req_login_sts(username, password, sig))
 
         if resp is None or resp.type != MsgType.OK:
             self._conn.disconnect()
@@ -189,8 +193,7 @@ class MessagingService:
         privkey    = crypto.rsa_generate_keypair()
         pubkey_pem = crypto.rsa_serialize_public(privkey)
         sig        = crypto.rsa_sign(privkey, self._conn.gx_bytes + self._conn.gy_bytes + pubkey_pem)
-        self._conn.send(Message.req_registo(username, password, pubkey_pem.decode("utf-8"), sig))
-        resp = self._conn.receive(TAG_RESPONSE)
+        resp = self._conn.send(Message.req_registo(username, password, pubkey_pem.decode("utf-8"), sig))
         if resp is None:
             return False, "Resposta do servidor inválida."
         if resp.type == MsgType.OK:
@@ -202,12 +205,11 @@ class MessagingService:
 
     def logout(self) -> tuple[bool, str]:
         try:
-            self._conn.send(Message.req_logout())
-            msg = self._conn.receive(TAG_RESPONSE)
-            if msg and msg.type == MsgType.OK:
-                return True, msg.info or ""
-            if msg and msg.type == MsgType.ERROR:
-                return False, msg.reason or ""
+            resp = self._conn.send(Message.req_logout())
+            if resp and resp.type == MsgType.OK:
+                return True, resp.info or ""
+            if resp and resp.type == MsgType.ERROR:
+                return False, resp.reason or ""
             return False, "Não foi possível receber confirmação do servidor."
         finally:
             self.disconnect()
@@ -215,85 +217,76 @@ class MessagingService:
     # ── Contactos ─────────────────────────────────────────────────────────────
 
     def add_contact(self, username: str) -> tuple[bool, str]:
-        self._conn.send(Message.req_add(username))
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            if msg.cert_pem:
-                self._keystore.save_contact_cert(username, msg.cert_pem)
-            return True, msg.info or ""
-        return False, (msg.reason if msg else "") or ""
+        resp = self._conn.send(Message.req_add(username))
+        if resp and resp.type == MsgType.OK:
+            if resp.cert_pem:
+                self._keystore.save_contact_cert(username, resp.cert_pem)
+            return True, resp.info or ""
+        return False, (resp.reason if resp else "") or ""
 
     def remove_contact(self, username: str) -> tuple[bool, str]:
         return self._simple(Message.req_remove(username))
 
     def list_online(self) -> tuple[bool, list, str]:
-        self._conn.send(Message.req_list_online())
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            return True, msg.users or [], ""
-        return False, [], (msg.reason if msg else "")
+        resp = self._conn.send(Message.req_list_online())
+        if resp and resp.type == MsgType.OK:
+            return True, resp.users or [], ""
+        return False, [], (resp.reason if resp else "")
 
     def list_contacts(self) -> tuple[bool, list, str]:
-        self._conn.send(Message.req_contacts())
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            return True, msg.users or [], ""
-        return False, [], (msg.reason if msg else "")
+        resp = self._conn.send(Message.req_contacts())
+        if resp and resp.type == MsgType.OK:
+            return True, resp.users or [], ""
+        return False, [], (resp.reason if resp else "")
 
     # ── Grupos ────────────────────────────────────────────────────────────────
 
     def create_group(self, group_name: str, members: list[str]) -> tuple[bool, str]:
-        self._conn.send(Message.req_create_group(group_name, members))
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
+        resp = self._conn.send(Message.req_create_group(group_name, members))
+        if resp and resp.type == MsgType.OK:
             self._groups.generate_sender_key(group_name)
             for m in [m.strip() for m in members if m.strip() and m.strip() != self._conn.username]:
                 self._groups._distribute_to(group_name, m)
-            return True, msg.info or ""
-        return False, (msg.reason if msg else "") or ""
+            return True, resp.info or ""
+        return False, (resp.reason if resp else "") or ""
 
     def delete_group(self, group_name: str) -> tuple[bool, str]:
         return self._simple(Message.req_delete_group(group_name))
 
     def leave_group(self, group_name: str) -> tuple[bool, str]:
-        self._conn.send(Message.req_leave_group(group_name))
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
+        resp = self._conn.send(Message.req_leave_group(group_name))
+        if resp and resp.type == MsgType.OK:
             self._groups.discard_sender_key(group_name)
             self._keystore.delete_history(group_name)
-            return True, msg.info or ""
-        return False, (msg.reason if msg else "") or ""
+            return True, resp.info or ""
+        return False, (resp.reason if resp else "") or ""
 
     def list_groups(self) -> tuple[bool, dict, str]:
-        self._conn.send(Message.req_groups())
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            return True, msg.groups or {}, ""
-        return False, {}, (msg.reason if msg else "")
+        resp = self._conn.send(Message.req_groups())
+        if resp and resp.type == MsgType.OK:
+            return True, resp.groups or {}, ""
+        return False, {}, (resp.reason if resp else "")
 
     def accept_group(self, group_name: str) -> tuple[bool, str]:
-        self._conn.send(Message.req_accept_group(group_name))
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            self._conn.send(Message.req_groups())
-            resp = self._conn.receive(TAG_RESPONSE)
-            if resp and resp.type == MsgType.OK:
+        resp = self._conn.send(Message.req_accept_group(group_name))
+        if resp and resp.type == MsgType.OK:
+            groups_resp = self._conn.send(Message.req_groups())
+            if groups_resp and groups_resp.type == MsgType.OK:
                 self._groups.generate_sender_key(group_name)
-                for member in resp.groups.get(group_name, []):
+                for member in groups_resp.groups.get(group_name, []):
                     if member != self._conn.username:
                         self._groups._distribute_to(group_name, member)
-            return True, msg.info or ""
-        return False, (msg.reason if msg else "") or ""
+            return True, resp.info or ""
+        return False, (resp.reason if resp else "") or ""
 
     def reject_group(self, group_name: str) -> tuple[bool, str]:
         return self._simple(Message.req_reject_group(group_name))
 
     def list_invites(self) -> tuple[bool, list, str]:
-        self._conn.send(Message.req_group_invites())
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            return True, msg.invites or [], ""
-        return False, [], (msg.reason if msg else "")
+        resp = self._conn.send(Message.req_group_invites())
+        if resp and resp.type == MsgType.OK:
+            return True, resp.invites or [], ""
+        return False, [], (resp.reason if resp else "")
 
     def invite_member(self, group_name: str, username: str) -> tuple[bool, str]:
         return self._simple(Message.req_add_group_member(group_name, username))
@@ -304,8 +297,7 @@ class MessagingService:
     # ── Chat ──────────────────────────────────────────────────────────────────
 
     def open_chat(self, target: str) -> tuple[ChatSession | None, str]:
-        self._conn.send(Message.req_chat(target))
-        resp = self._conn.receive(TAG_RESPONSE)
+        resp = self._conn.send(Message.req_chat(target))
         if resp is None:
             return None, "Ligação perdida."
         if resp.type == MsgType.ERROR:
@@ -318,8 +310,7 @@ class MessagingService:
             if not ok:
                 return None, err
         else:
-            self._conn.send(Message.req_groups())
-            groups_resp = self._conn.receive(TAG_RESPONSE)
+            groups_resp = self._conn.send(Message.req_groups())
             members = []
             if groups_resp and groups_resp.type == MsgType.OK:
                 members = [m for m in groups_resp.groups.get(target, [])
@@ -331,7 +322,7 @@ class MessagingService:
 
     def close_chat(self, target: str) -> None:
         try:
-            self._conn.send(Message.req_chat_leave(target))
+            self._conn.send_ack(Message.req_chat_leave(target))
         except OSError:
             pass
 
@@ -358,8 +349,7 @@ class MessagingService:
             return SendResult(ok=False, error=err)
 
         # fallback plain
-        self._conn.send(Message.req_send(me, target, text, timestamp))
-        resp = self._conn.receive(TAG_RESPONSE)
+        resp = self._conn.send(Message.req_send(me, target, text, timestamp))
         if resp is None:
             return SendResult(ok=False, error="Ligação perdida.", lost=True)
         if resp.type == MsgType.ERROR:
@@ -370,12 +360,11 @@ class MessagingService:
     # ── Utilitário ────────────────────────────────────────────────────────────
 
     def _simple(self, req: Message) -> tuple[bool, str]:
-        self._conn.send(req)
-        msg = self._conn.receive(TAG_RESPONSE)
-        if msg and msg.type == MsgType.OK:
-            return True, msg.info or ""
-        if msg and msg.type == MsgType.ERROR:
-            return False, msg.reason or ""
+        resp = self._conn.send(req)
+        if resp and resp.type == MsgType.OK:
+            return True, resp.info or ""
+        if resp and resp.type == MsgType.ERROR:
+            return False, resp.reason or ""
         return False, ""
 
 
