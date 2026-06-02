@@ -52,22 +52,14 @@ def _ratchet_advance(chain_key: bytes) -> tuple[bytes, bytes]:
 
 
 def _aes_encrypt(msg_key: bytes, plaintext: bytes, counter: int) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     nonce = counter.to_bytes(12, "big")
     aad   = counter.to_bytes(8, "big")
-    ct    = AESGCM(msg_key).encrypt(nonce, plaintext, aad)
-    return nonce + ct
+    return crypto.encrypt_counter(msg_key, nonce, plaintext, aad)
 
 
 def _aes_decrypt(msg_key: bytes, data: bytes, counter: int) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    nonce = data[:12]
-    ct    = data[12:]
-    aad   = counter.to_bytes(8, "big")
-    try:
-        return AESGCM(msg_key).decrypt(nonce, ct, aad)
-    except Exception:
-        raise ValueError("Autenticação AES-GCM falhou.")
+    aad = counter.to_bytes(8, "big")
+    return crypto.decrypt_counter(msg_key, data, aad)
 
 
 class ConversationState:

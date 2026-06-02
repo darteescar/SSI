@@ -391,6 +391,22 @@ def dh_derive_directional_keys(private_key, peer_pub_bytes: bytes,
     ).derive(shared)
     return c2s, s2c
 
+def encrypt_counter(key: bytes, nonce: bytes, plaintext: bytes,
+                    aad: bytes | None = None) -> bytes:
+    """AES-256-GCM with a pre-built nonce. Returns nonce + ciphertext+tag."""
+    return nonce + AESGCM(key).encrypt(nonce, plaintext, aad)
+
+
+def decrypt_counter(key: bytes, data: bytes,
+                    aad: bytes | None = None) -> bytes:
+    """Inverse of encrypt_counter. Expects nonce(12) + ciphertext+tag."""
+    nonce = data[:NONCE_SIZE_AES]
+    try:
+        return AESGCM(key).decrypt(nonce, data[NONCE_SIZE_AES:], aad)
+    except InvalidTag:
+        raise ValueError("Autenticação AES-GCM falhou — dados corrompidos ou chave errada.")
+
+
 def rotate_key(current_key: bytes) -> bytes:
     """
     Deriva próxima chave a partir da actual (forward secrecy leve).

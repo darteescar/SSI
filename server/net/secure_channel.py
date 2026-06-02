@@ -6,8 +6,6 @@ _PROJECT_DIR = os.path.dirname(_SERVER_DIR)
 sys.path.insert(0, _SERVER_DIR)
 sys.path.insert(0, _PROJECT_DIR)
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 from common.transport import Transport
 from common.Message import Message
 from common import crypto
@@ -49,7 +47,7 @@ class SecureChannel:
         key   = self._key_s2c(self._n_send)
         nonce = self._counter_nonce(self._n_send)
         data  = msg.serialize().encode("utf-8")
-        self._transport.send(nonce + AESGCM(key).encrypt(nonce, data, None))
+        self._transport.send(crypto.encrypt_counter(key, nonce, data))
 
     def recv(self) -> Message:
         if self._dh_shared is None:
@@ -61,7 +59,7 @@ class SecureChannel:
             raise ValueError(f"Contador de sequência inválido — possível replay.")
         self._n_recv += 1
         key       = self._key_c2s(self._n_recv)
-        plaintext = AESGCM(key).decrypt(nonce, raw[12:], None)
+        plaintext = crypto.decrypt_counter(key, raw)
         return Message.deserialize(plaintext.decode("utf-8"))
 
     def send_raw(self, data: bytes) -> None:
