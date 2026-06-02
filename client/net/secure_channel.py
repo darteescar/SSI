@@ -81,7 +81,7 @@ class SecureChannel:
             nonce = self._counter_nonce(self._n_send)
             self.transport.send(crypto.encrypt_counter(key, nonce, msg_bytes))
 
-    def _recv_encrypted_raw(self) -> Message:
+    def recv_encrypted(self) -> Message:
         raw   = self.transport.recv()
         nonce = raw[:12]
         expected = self._counter_nonce(self._n_recv + 1)
@@ -91,9 +91,6 @@ class SecureChannel:
         key       = self._key_s2c(self._n_recv)
         plaintext = crypto.decrypt_counter(key, raw)
         return Message.deserialize(plaintext.decode("utf-8"))
-
-    def recv_encrypted(self) -> Message:
-        return self._recv_encrypted_raw()
 
     def initiate_rekey(self):
         new_priv, new_gx = crypto.dh_generate_keypair()
