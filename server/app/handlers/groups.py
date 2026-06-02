@@ -1,5 +1,7 @@
+import logging
 from common.Message import Message
-import logger as log
+
+_log = logging.getLogger("group")
 
 
 class GroupHandlerMixin:
@@ -32,7 +34,7 @@ class GroupHandlerMixin:
         if not self.user_manager.create_group(group_name, members, self.username):
             self._session.send(Message.error(f"Erro ao criar o grupo '{group_name}'."))
             return
-        log.group.info(f"grupo '{group_name}' criado com convites para {members} — criador deve gerar a sua sender key e distribui-la via E2E par-a-par")
+        _log.info(f"grupo '{group_name}' criado com convites para {members} — criador deve gerar a sua sender key e distribui-la via E2E par-a-par")
         self._session.send(Message.resp_create_group(group_name))
 
     def handle_DELETE_GROUP(self, msg: Message) -> None:
@@ -68,7 +70,7 @@ class GroupHandlerMixin:
         remaining = self.user_manager.get_group_members(group_name)
         remaining = [m for m in remaining if m != self.username]
         self.user_manager.leave_group(group_name, self.username)
-        log.group.info(f"saída voluntária do grupo '{group_name}' — {len(remaining)} membro(s) remanescente(s) serão instruídos a rodar a sua sender key (forward secrecy face ao ex-membro)")
+        _log.info(f"saída voluntária do grupo '{group_name}' — {len(remaining)} membro(s) remanescente(s) serão instruídos a rodar a sua sender key (forward secrecy face ao ex-membro)")
         self._session.send(Message.resp_leave_group(group_name))
         notify = Message.push_group_member_left(group_name, self.username)
         online_count = 0
@@ -82,7 +84,7 @@ class GroupHandlerMixin:
                 self.user_manager.enqueue_group_notification(
                     member, "GROUP_MEMBER_LEFT", group_name, self.username)
                 offline_count += 1
-        log.group.info(f"notificações GROUP_MEMBER_LEFT do grupo '{group_name}': {online_count} entregue(s) imediatamente, {offline_count} enfileirada(s) para entrega quando o membro reconectar")
+        _log.info(f"notificações GROUP_MEMBER_LEFT do grupo '{group_name}': {online_count} entregue(s) imediatamente, {offline_count} enfileirada(s) para entrega quando o membro reconectar")
 
     def handle_GROUPS(self) -> None:
         groups = self.user_manager.get_groups(self.username)
@@ -109,7 +111,7 @@ class GroupHandlerMixin:
             return
         self._sync_group_contacts(group_name, self.username)
         members = self.user_manager.get_group_members(group_name)
-        log.group.info(f"convite para o grupo '{group_name}' aceite — membros actuais: {members}. Cliente que aceitou deve gerar a sua sender key e distribuí-la aos restantes via E2E par-a-par")
+        _log.info(f"convite para o grupo '{group_name}' aceite — membros actuais: {members}. Cliente que aceitou deve gerar a sua sender key e distribuí-la aos restantes via E2E par-a-par")
         self._session.send(Message.resp_accept_group(group_name))
         notify = Message.push_group_member_joined(group_name, self.username)
         online_count = 0
@@ -125,7 +127,7 @@ class GroupHandlerMixin:
                 self.user_manager.enqueue_group_notification(
                     member, "GROUP_MEMBER_JOINED", group_name, self.username)
                 offline_count += 1
-        log.group.info(f"notificações GROUP_MEMBER_JOINED do grupo '{group_name}': {online_count} entregue(s) imediatamente (irão distribuir SK ao novo membro), {offline_count} enfileirada(s) para entrega quando o membro reconectar")
+        _log.info(f"notificações GROUP_MEMBER_JOINED do grupo '{group_name}': {online_count} entregue(s) imediatamente (irão distribuir SK ao novo membro), {offline_count} enfileirada(s) para entrega quando o membro reconectar")
 
     def handle_REJECT(self, msg: Message) -> None:
         group_name = msg.group_name
@@ -185,7 +187,7 @@ class GroupHandlerMixin:
             return
         remaining = self.user_manager.get_group_members(group_name)
         remaining = [m for m in remaining if m != member]
-        log.group.info(f"expulsão de '{member}' do grupo '{group_name}' — {len(remaining)} membro(s) remanescente(s) serão instruídos a rodar a sua sender key (forward secrecy face ao expulso)")
+        _log.info(f"expulsão de '{member}' do grupo '{group_name}' — {len(remaining)} membro(s) remanescente(s) serão instruídos a rodar a sua sender key (forward secrecy face ao expulso)")
         self._session.send(Message.resp_kick_group_member(group_name, member))
         notify = Message.push_group_member_left(group_name, member)
         online_count = 0
@@ -199,4 +201,4 @@ class GroupHandlerMixin:
                 self.user_manager.enqueue_group_notification(
                     m, "GROUP_MEMBER_LEFT", group_name, member)
                 offline_count += 1
-        log.group.info(f"notificações GROUP_MEMBER_LEFT (expulsão) do grupo '{group_name}': {online_count} entregue(s) imediatamente, {offline_count} enfileirada(s)")
+        _log.info(f"notificações GROUP_MEMBER_LEFT (expulsão) do grupo '{group_name}': {online_count} entregue(s) imediatamente, {offline_count} enfileirada(s)")

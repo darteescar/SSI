@@ -1,6 +1,8 @@
+import logging
 from common.Message import Message
 from common.MsgType import MsgType
-import logger as log
+
+_log = logging.getLogger("e2e")
 
 
 class PrekeysHandlerMixin:
@@ -11,7 +13,7 @@ class PrekeysHandlerMixin:
             return
         self.user_manager.store_prekeys(self.username, prekeys)
         stock = self.user_manager.prekey_count(self.username)
-        log.e2e.info(f"upload de {len(prekeys)} prekeys DH assinadas (X3DH-like, para iniciação offline) — stock total disponível para outros utilizadores: {stock}")
+        _log.info(f"upload de {len(prekeys)} prekeys DH assinadas (X3DH-like, para iniciação offline) — stock total disponível para outros utilizadores: {stock}")
         self._session.send(Message(MsgType.OK, {"info": f"{len(prekeys)} prekeys adicionadas ao stock."}))
 
     def handle_PREKEY_REQUEST(self, msg: Message) -> None:
@@ -26,20 +28,20 @@ class PrekeysHandlerMixin:
         cert_pem = self.user_manager.get_user_cert(target) or ""
 
         if self.user_manager.is_online(target):
-            log.e2e.info(f"pediu material para estabelecer E2E com '{target}': destinatário online, devolvido apenas o certificado X.509 (handshake DH direto, sem consumir prekey)")
+            _log.info(f"pediu material para estabelecer E2E com '{target}': destinatário online, devolvido apenas o certificado X.509 (handshake DH direto, sem consumir prekey)")
             self._session.send(Message.resp_online_bundle(cert_pem))
             return
 
         prekey, low_stock = self.user_manager.pop_prekey(target)
         if prekey is None:
-            log.e2e.warning(f"pediu prekey de '{target}' para iniciação offline: stock de prekeys esgotado — sessão E2E não pode ser estabelecida")
+            _log.warning(f"pediu prekey de '{target}' para iniciação offline: stock de prekeys esgotado — sessão E2E não pode ser estabelecida")
             self._session.send(Message.error(
                 f"'{target}' está offline e não tem prekeys disponíveis. "
                 "Tenta quando estiver online."))
             return
 
         stock_restante = self.user_manager.prekey_count(target)
-        log.e2e.info(
+        _log.info(
             f"pediu prekey de '{target}' para iniciação X3DH offline — entregue prekey_idx={prekey['idx']}, "
             f"stock restante: {stock_restante}"
             + (" [STOCK BAIXO — cliente vai repor prekeys]" if low_stock else "")
@@ -81,10 +83,10 @@ class PrekeysHandlerMixin:
         handler = self.user_manager.get_handler(to)
         if handler:
             handler.push_to_client(deliver)
-            log.e2e.info(f"relay E2E para '{to}' — payload opaco de {len(payload_b64)}B entregue imediatamente (destinatário online)")
+            _log.info(f"relay E2E para '{to}' — payload opaco de {len(payload_b64)}B entregue imediatamente (destinatário online)")
         else:
             self.user_manager.enqueue_e2e_msg(to, self.username, msg_id, payload_b64)
-            log.e2e.info(f"relay E2E para '{to}' — payload opaco de {len(payload_b64)}B enfileirado em disco (destinatário offline, entrega no próximo login)")
+            _log.info(f"relay E2E para '{to}' — payload opaco de {len(payload_b64)}B enfileirado em disco (destinatário offline, entrega no próximo login)")
 
     def handle_E2E_ACK(self, msg: Message) -> None:
         msg_id = msg.e2e_msg_id
