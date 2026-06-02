@@ -86,6 +86,12 @@ class ChatView:
         else:
             ChatPanelView.print_message(sender, recipient, text, timestamp)
 
+    def is_viewing(self, target: str, is_group: bool) -> bool:
+        """True se a UI está actualmente a mostrar o chat com este target."""
+        if is_group:
+            return self._mode == "group" and self._target == target
+        return self._mode == "chat" and self._target == target
+
     def set_username(self, username: str):
         self._username = username
 

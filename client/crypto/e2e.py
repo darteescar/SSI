@@ -22,7 +22,7 @@ class E2ELayer:
     def __init__(self, conn, keystore):
         self._conn     = conn      # ServerConnection
         self._keystore = keystore  # Keystore
-        self._mgr      = E2EManager(keystore, conn.__class__.__module__)
+        self._mgr: E2EManager | None = None  # criado em init()
         self._dh_resp_events: dict[str, threading.Event]       = {}
         self._pending_e2e:    dict[str, list[tuple[str, str]]] = {}
 
@@ -30,6 +30,7 @@ class E2ELayer:
         self.on_message: Callable[[str, str, str, str], None] | None = None
 
     def init(self, server_cert_path: str) -> None:
+        """Constrói o E2EManager com o caminho do certificado do servidor."""
         self._mgr = E2EManager(self._keystore, server_cert_path)
 
     def set_privkey(self, privkey) -> None:
@@ -170,7 +171,7 @@ class E2ELayer:
             return
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
-        me = getattr(self._conn, 'username', None) or "?"
+        me = self._conn.username or "?"
         self._keystore.append_history(sender, sender, me, text, ts)
         if self.on_message:
             self.on_message(sender, me, text, ts)

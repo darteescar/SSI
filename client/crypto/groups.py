@@ -36,9 +36,6 @@ class GroupLayer:
     def has_sender_key(self, group_name: str) -> bool:
         return self._mgr.has_sender_key(group_name)
 
-    def generate_sender_key(self, group_name: str) -> None:
-        self._mgr.generate_sender_key(group_name)
-
     def discard_sender_key(self, group_name: str) -> None:
         self._mgr.discard_sender_key(group_name)
 

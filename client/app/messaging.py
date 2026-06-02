@@ -244,9 +244,8 @@ class MessagingService:
     def create_group(self, group_name: str, members: list[str]) -> tuple[bool, str]:
         resp = self._conn.send(Message.req_create_group(group_name, members))
         if resp and resp.type == MsgType.OK:
-            self._groups.generate_sender_key(group_name)
-            for m in [m.strip() for m in members if m.strip() and m.strip() != self._conn.username]:
-                self._groups._distribute_to(group_name, m)
+            clean = [m.strip() for m in members if m.strip()]
+            self._groups.ensure_sender_key_distributed(group_name, clean)
             return True, resp.info or ""
         return False, (resp.reason if resp else "") or ""
 
@@ -272,10 +271,8 @@ class MessagingService:
         if resp and resp.type == MsgType.OK:
             groups_resp = self._conn.send(Message.req_groups())
             if groups_resp and groups_resp.type == MsgType.OK:
-                self._groups.generate_sender_key(group_name)
-                for member in groups_resp.groups.get(group_name, []):
-                    if member != self._conn.username:
-                        self._groups._distribute_to(group_name, member)
+                members = groups_resp.groups.get(group_name, [])
+                self._groups.ensure_sender_key_distributed(group_name, members)
             return True, resp.info or ""
         return False, (resp.reason if resp else "") or ""
 

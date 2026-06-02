@@ -57,11 +57,12 @@ class Controller:
     # ── Callbacks de mensagens recebidas (push, já chamadas com ui_lock) ──────
 
     def _on_message_received(self, sender: str, recipient: str, text: str, ts: str) -> None:
-        if self.view._mode == "chat" and self.view._target == sender:
+        if self.view.is_viewing(sender, is_group=False):
             self.view.print_chat_message(sender, recipient, text, ts)
 
     def _on_group_message_received(self, sender: str, group_display: str, text: str, ts: str) -> None:
-        if self.view._mode == "group" and group_display == f"#{self.view._target}":
+        group_name = group_display.lstrip("#")
+        if self.view.is_viewing(group_name, is_group=True):
             self.view.print_chat_message(sender, group_display, text, ts)
 
     # ── Autenticação ──────────────────────────────────────────────────────────
