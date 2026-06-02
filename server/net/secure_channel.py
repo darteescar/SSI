@@ -8,13 +8,13 @@ sys.path.insert(0, _PROJECT_DIR)
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from common.transport import SocketTransport
+from common.transport import Transport
 from common.Message import Message
 from common import crypto
 
 
 class SecureChannel:
-    def __init__(self, transport: SocketTransport):
+    def __init__(self, transport: Transport):
         self._transport = transport
         self._dh_shared: bytes | None = None
         self._n_send: int = 0

@@ -9,7 +9,7 @@ _PROJECT_DIR = os.path.dirname(_SERVER_DIR)
 sys.path.insert(0, _SERVER_DIR)
 sys.path.insert(0, _PROJECT_DIR)
 
-from common.transport import SocketTransport
+from common.transport import Transport
 from net.secure_channel import SecureChannel
 from common import crypto
 from common.Message import Message
@@ -24,7 +24,7 @@ class ClientSession:
         self._server_cert    = server_cert
         self._user_manager   = user_manager
 
-        transport     = SocketTransport(conn, addr)
+        transport     = Transport.from_socket(conn, addr)
         self._channel = SecureChannel(transport)
 
         self.username: str | None    = None

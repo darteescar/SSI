@@ -67,8 +67,8 @@ SERVER_CERT_PATH = os.path.join(_DATA_DIR, "ca", "server.crt")
 
 class NetworkClient:
     def __init__(self):
-        self.transport = Transport(HOST, PORT)
-        self.channel   = SecureChannel(self.transport, SERVER_CERT_PATH)
+        self.transport: Transport | None = None
+        self.channel:   SecureChannel | None = None
         self.keystore  = Keystore()
         self.e2e       = E2EManager(self.keystore, SERVER_CERT_PATH)
         self.group_sk  = GroupSenderKeyManager(self.keystore)
@@ -83,12 +83,14 @@ class NetworkClient:
         self.user_id: int | None  = None
 
     def connect(self) -> None:
-        self.transport.connect()
+        self.transport = Transport.connect(HOST, PORT)
+        self.channel   = SecureChannel(self.transport, SERVER_CERT_PATH)
         self.queue = queue.Queue()
         self.channel.dh_handshake()
 
     def disconnect(self) -> None:
-        self.channel.disconnect()
+        if self.channel:
+            self.channel.disconnect()
         self.keystore.set_user("")
         self.e2e.reset()
         self.group_sk.reset()
@@ -97,7 +99,7 @@ class NetworkClient:
         set_logger_user(None)
 
     def is_logged_in(self) -> bool:
-        return self.channel.dh_shared is not None and self.username is not None
+        return self.channel is not None and self.channel.dh_shared is not None and self.username is not None
 
     def set_logged_out(self) -> None:
         self.username = None

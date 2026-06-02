@@ -56,9 +56,9 @@ class SecureChannel:
 
         dh_priv, gx_bytes = crypto.dh_generate_keypair()
         _clog.debug(f"[DH] g^x gerado: {len(gx_bytes)} bytes")
-        self.transport.send_raw(gx_bytes)
+        self.transport.send(gx_bytes)
 
-        response = self.transport.recv_raw()
+        response = self.transport.recv()
         gy_bytes, sig_servidor = crypto.unpair(response)
 
         crypto.rsa_verify(server_pubkey, sig_servidor, gx_bytes + gy_bytes)
@@ -81,10 +81,10 @@ class SecureChannel:
             self._n_send += 1
             key   = self._key_c2s(self._n_send)
             nonce = self._counter_nonce(self._n_send)
-            self.transport.send_raw(nonce + AESGCM(key).encrypt(nonce, msg_bytes, None))
+            self.transport.send(nonce + AESGCM(key).encrypt(nonce, msg_bytes, None))
 
     def _recv_encrypted_raw(self) -> Message:
-        raw   = self.transport.recv_raw()
+        raw   = self.transport.recv()
         nonce = raw[:12]
         expected = self._counter_nonce(self._n_recv + 1)
         if nonce != expected:

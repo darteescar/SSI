@@ -5,72 +5,44 @@ MAX_MSG_SIZE = 10 * 1024 * 1024
 
 
 class Transport:
-    """Client-side TCP transport — connects to a remote host:port."""
+    """TCP transport — usado pelo cliente (connect) e pelo servidor (from_socket)."""
 
-    def __init__(self, host: str, port: int):
-        self.host = host
-        self.port = port
-        self.socket: socket.socket | None = None
+    def __init__(self, sock: socket.socket, addr: tuple):
+        self._socket = sock
+        self.addr    = addr
         self._buffer = b""
 
-    def connect(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((self.host, self.port))
-        self._buffer = b""
+    # ── Construtores ──────────────────────────────────────────────────────────
 
-    def disconnect(self):
-        if self.socket:
-            try:
-                self.socket.close()
-            except OSError:
-                pass
-            self.socket = None
-        self._buffer = b""
+    @classmethod
+    def connect(cls, host: str, port: int) -> "Transport":
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, port))
+        return cls(sock, (host, port))
 
-    def send_raw(self, data: bytes):
-        if not self.socket:
-            raise OSError("Não ligado ao servidor.")
-        self.socket.sendall(struct.pack(">I", len(data)) + data)
+    @classmethod
+    def from_socket(cls, conn: socket.socket, addr: tuple) -> "Transport":
+        return cls(conn, addr)
 
-    def recv_raw(self) -> bytes:
-        if not self.socket:
-            raise OSError("Não ligado ao servidor.")
+    # ── Interface pública ─────────────────────────────────────────────────────
 
-        while len(self._buffer) < 4:
-            chunk = self.socket.recv(4096)
-            if not chunk:
-                raise ConnectionResetError("Servidor desligou.")
-            self._buffer += chunk
-
-        size = struct.unpack(">I", self._buffer[:4])[0]
-        if size > MAX_MSG_SIZE:
-            raise ValueError(f"Mensagem demasiado grande: {size} bytes")
-        self._buffer = self._buffer[4:]
-
-        while len(self._buffer) < size:
-            chunk = self.socket.recv(4096)
-            if not chunk:
-                raise ConnectionResetError("Servidor desligou.")
-            self._buffer += chunk
-
-        data, self._buffer = self._buffer[:size], self._buffer[size:]
-        return data
-
-
-class SocketTransport:
-    def __init__(self, conn: socket.socket, addr: tuple):
-        self.addr = addr
-        self._conn = conn
-        self._buffer = b""
+    @property
+    def socket(self) -> socket.socket | None:
+        return self._socket
 
     def send(self, data: bytes) -> None:
-        self._conn.sendall(struct.pack(">I", len(data)) + data)
+        if not self._socket:
+            raise OSError("Não ligado.")
+        self._socket.sendall(struct.pack(">I", len(data)) + data)
 
     def recv(self) -> bytes:
+        if not self._socket:
+            raise OSError("Não ligado.")
+
         while len(self._buffer) < 4:
-            chunk = self._conn.recv(4096)
+            chunk = self._socket.recv(4096)
             if not chunk:
-                raise ConnectionResetError("Cliente desligou.")
+                raise ConnectionResetError("Ligação encerrada pelo par.")
             self._buffer += chunk
 
         size = struct.unpack(">I", self._buffer[:4])[0]
@@ -79,16 +51,22 @@ class SocketTransport:
         self._buffer = self._buffer[4:]
 
         while len(self._buffer) < size:
-            chunk = self._conn.recv(4096)
+            chunk = self._socket.recv(4096)
             if not chunk:
-                raise ConnectionResetError("Cliente desligou.")
+                raise ConnectionResetError("Ligação encerrada pelo par.")
             self._buffer += chunk
 
         data, self._buffer = self._buffer[:size], self._buffer[size:]
         return data
 
-    def close(self) -> None:
-        try:
-            self._conn.close()
-        except OSError:
-            pass
+    def disconnect(self) -> None:
+        if self._socket:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
+            self._socket = None
+        self._buffer = b""
+
+    # alias usado pelo servidor
+    close = disconnect

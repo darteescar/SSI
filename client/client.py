@@ -9,13 +9,15 @@ sys.path.insert(0, _PROJECT_DIR)
 
 from net.network import NetworkClient
 from ui.view import ChatView
+from app.messaging import MessagingService
 from app.controller import Controller
 
 
 async def main():
-    network = NetworkClient()
-    view = ChatView()
-    controller = Controller(network, view)
+    network    = NetworkClient()
+    view       = ChatView()
+    messaging  = MessagingService(network)
+    controller = Controller(view, messaging)
     await controller.run()
 
 if __name__ == "__main__":
