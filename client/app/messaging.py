@@ -1,18 +1,12 @@
 """MessagingService — orquestração de alto nível.
 
-Responsabilidades:
-- Autenticação (login, registo, logout)
-- Contactos e grupos (operações CRUD via ServerConnection)
-- Abrir/fechar chat (valida no servidor, garante E2E/grupo, devolve histórico)
-- Enviar mensagem (delega em E2ELayer ou GroupLayer)
-- Receber mensagens push (distribui para E2ELayer / GroupLayer conforme o tipo)
-- Expor callbacks simples (strings) para o Controller
-
-NÃO sabe nada de: DH, payloads base64, ratchet, sender keys internamente.
-NÃO fala com Transport, SecureChannel nem E2EManager directamente.
+Cada método público que comunica com o servidor é bloqueante e pensado para
+ser chamado via run_in_executor, i.e., numa thread separada do asyncio loop.
+O acesso à UI é serializado pelo ui_lock passado no construtor.
 """
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -55,79 +49,63 @@ class SendResult:
 class MessagingService:
 
     def __init__(self, conn: ServerConnection, keystore: Keystore,
-                 e2e: E2ELayer, groups: GroupLayer):
+                 e2e: E2ELayer, groups: GroupLayer, ui_lock: threading.Lock):
         self._conn     = conn
         self._keystore = keystore
         self._e2e      = e2e
         self._groups   = groups
+        self._ui_lock  = ui_lock
 
-        # callbacks para o Controller (strings simples)
+        # callbacks para o Controller — chamados com ui_lock adquirido
         self.on_message_received:       Callable[[str, str, str, str], None] | None = None
         self.on_group_message_received: Callable[[str, str, str, str], None] | None = None
 
-        # ligar callbacks internos
         self._e2e.on_message    = self._on_e2e_text
         self._groups.on_message = self._on_group_text
 
-        # lançar thread de dispatch de mensagens push
-        import threading
-        self._push_thread = threading.Thread(
-            target=self._push_loop, name="PushDispatcher", daemon=True
-        )
+    def _start_push_dispatcher(self) -> None:
+        """Lança as 3 threads de dispatch de mensagens push. Chamado após login."""
+        for tag, handler in (
+            (TAG_E2E,       self._dispatch_e2e),
+            (TAG_CHAT,      self._dispatch_chat),
+            (TAG_GROUP_EVT, self._dispatch_group_evt),
+        ):
+            threading.Thread(
+                target=self._dispatch_loop, args=(tag, handler),
+                name=f"Push-{tag}", daemon=True,
+            ).start()
 
-    def start(self) -> None:
-        """Lança a thread de dispatch. Chamado após login bem-sucedido."""
-        self._push_thread = __import__("threading").Thread(
-            target=self._push_loop, name="PushDispatcher", daemon=True
-        )
-        self._push_thread.start()
+    def _dispatch_loop(self, tag: int, handler: Callable) -> None:
+        while True:
+            msg = self._conn.receive(tag)
+            if msg is None:
+                return
+            try:
+                handler(msg)
+            except Exception as e:
+                _log.error(f"[Push-{tag}] erro: {e}")
 
-    # ── Callbacks internos (E2ELayer / GroupLayer → MessagingService → Controller)
+    # ── Callbacks de mensagens push → Controller ──────────────────────────────
 
     def _on_e2e_text(self, sender: str, me: str, text: str, ts: str) -> None:
         if self.on_message_received:
-            self.on_message_received(sender, me, text, ts)
+            with self._ui_lock:
+                self.on_message_received(sender, me, text, ts)
 
     def _on_group_text(self, sender: str, group_display: str, text: str, ts: str) -> None:
         if self.on_group_message_received:
-            self.on_group_message_received(sender, group_display, text, ts)
-
-    # ── Thread de dispatch de mensagens push ──────────────────────────────────
-
-    def _push_loop(self) -> None:
-        """Lê das filas push do Demultiplexer e distribui para as camadas correctas."""
-        import threading
-
-        def _dispatch_tag(tag: int, handler):
-            def _run():
-                while True:
-                    msg = self._conn.receive(tag)
-                    if msg is None:
-                        return
-                    try:
-                        handler(msg)
-                    except Exception as e:
-                        _log.error(f"[PushDispatcher] erro ao processar tag={tag}: {e}")
-            t = threading.Thread(target=_run, daemon=True)
-            t.start()
-
-        _dispatch_tag(TAG_E2E,       self._dispatch_e2e)
-        _dispatch_tag(TAG_CHAT,      self._dispatch_chat)
-        _dispatch_tag(TAG_GROUP_EVT, self._dispatch_group_evt)
+            with self._ui_lock:
+                self.on_group_message_received(sender, group_display, text, ts)
 
     def _dispatch_e2e(self, msg: Message) -> None:
         import base64, json as _json
-        payload_b64 = msg.payload_b64
         try:
-            raw   = base64.b64decode(payload_b64)
+            raw   = base64.b64decode(msg.payload_b64)
             ptype = _json.loads(raw.decode("utf-8")).get("type", "msg")
         except Exception:
             ptype = "msg"
-
         if ptype == "sk_dist":
-            self._groups.handle_sk_dist(
-                msg.from_ or "?", payload_b64, msg.e2e_msg_id
-            )
+            self._groups.handle_sk_dist(msg.from_ or "?", msg.payload_b64, msg.e2e_msg_id)
         else:
             self._e2e.handle_deliver(msg)
 
@@ -136,9 +114,10 @@ class MessagingService:
             sender    = msg.from_ or "Desconhecido"
             recipient = msg.to    or "Desconhecido"
             text      = msg.text
-            timestamp = msg.timestamp or self._now()
+            timestamp = msg.timestamp or _now()
             if self.on_message_received:
-                self.on_message_received(sender, recipient, text, timestamp)
+                with self._ui_lock:
+                    self.on_message_received(sender, recipient, text, timestamp)
         elif msg.type == MsgType.GROUP_RECEIVE:
             self._groups.handle_receive(msg)
 
@@ -150,7 +129,7 @@ class MessagingService:
         elif msg.type == MsgType.GROUP_MEMBER_JOINED:
             self._groups.handle_member_joined(group_name, info)
 
-    # ── Autenticação ──────────────────────────────────────────────────────────
+    # ── Ciclo de vida ─────────────────────────────────────────────────────────
 
     def connect(self) -> None:
         self._conn.connect()
@@ -169,6 +148,8 @@ class MessagingService:
 
     def username(self) -> str | None:
         return self._conn.username
+
+    # ── Autenticação ──────────────────────────────────────────────────────────
 
     def login(self, username: str, password: str) -> tuple[bool, str]:
         import common.crypto as crypto
@@ -197,7 +178,7 @@ class MessagingService:
         set_logger_user(username)
         self._e2e.set_privkey(privkey)
         self._e2e.generate_and_upload_prekeys()
-        self.start()
+        self._start_push_dispatcher()
         return True, resp.info or ""
 
     def registo(self, username: str, password: str) -> tuple[bool, str]:
@@ -207,12 +188,8 @@ class MessagingService:
 
         privkey    = crypto.rsa_generate_keypair()
         pubkey_pem = crypto.rsa_serialize_public(privkey)
-        sig        = crypto.rsa_sign(
-            privkey,
-            self._conn.gx_bytes + self._conn.gy_bytes + pubkey_pem,
-        )
-        self._conn.send(Message.req_registo(username, password,
-                                            pubkey_pem.decode("utf-8"), sig))
+        sig        = crypto.rsa_sign(privkey, self._conn.gx_bytes + self._conn.gy_bytes + pubkey_pem)
+        self._conn.send(Message.req_registo(username, password, pubkey_pem.decode("utf-8"), sig))
         resp = self._conn.receive(TAG_RESPONSE)
         if resp is None:
             return False, "Resposta do servidor inválida."
@@ -270,10 +247,8 @@ class MessagingService:
         msg = self._conn.receive(TAG_RESPONSE)
         if msg and msg.type == MsgType.OK:
             self._groups.generate_sender_key(group_name)
-            for m in members:
-                m = m.strip()
-                if m and m != self._conn.username:
-                    self._groups._distribute_to(group_name, m)
+            for m in [m.strip() for m in members if m.strip() and m.strip() != self._conn.username]:
+                self._groups._distribute_to(group_name, m)
             return True, msg.info or ""
         return False, (msg.reason if msg else "") or ""
 
@@ -342,16 +317,13 @@ class MessagingService:
             ok, err = self._e2e.ensure_session(target)
             if not ok:
                 return None, err
-
-        if is_group:
+        else:
             self._conn.send(Message.req_groups())
             groups_resp = self._conn.receive(TAG_RESPONSE)
             members = []
             if groups_resp and groups_resp.type == MsgType.OK:
-                members = [
-                    m for m in groups_resp.groups.get(target, [])
-                    if m != self._conn.username
-                ]
+                members = [m for m in groups_resp.groups.get(target, [])
+                           if m != self._conn.username]
             self._groups.ensure_sender_key_distributed(target, members)
 
         history = self._keystore.load_history(target)
@@ -406,5 +378,6 @@ class MessagingService:
             return False, msg.reason or ""
         return False, ""
 
-    def _now(self) -> str:
-        return datetime.now().strftime("%H:%M:%S")
+
+def _now() -> str:
+    return datetime.now().strftime("%H:%M:%S")

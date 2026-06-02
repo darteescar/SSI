@@ -86,10 +86,6 @@ class Demultiplexer:
         """Envia uma mensagem pelo canal seguro (thread-safe via _send_lock do canal)."""
         self._channel.send_encrypted(msg.serialize().encode("utf-8"))
 
-    def send_raw(self, data: bytes) -> None:
-        """Envia bytes em bruto (usado no handshake DH antes da cifra)."""
-        self._channel.transport.send(data)
-
     def receive(self, tag: int) -> Message | None:
         """Bloqueia até haver uma mensagem na fila da tag dada.
         Devolve None se o demultiplexer fechar ou ocorrer uma excepção."""

@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import threading
 
 _CLIENT_DIR  = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_CLIENT_DIR)
@@ -17,15 +18,16 @@ from ui.view import ChatView
 
 
 async def main():
+    ui_lock  = threading.Lock()
     conn     = ServerConnection()
     keystore = Keystore()
     e2e      = E2ELayer(conn, keystore)
     e2e.init(SERVER_CERT_PATH)
     groups   = GroupLayer(conn, e2e, keystore)
 
-    messaging  = MessagingService(conn, keystore, e2e, groups)
+    messaging  = MessagingService(conn, keystore, e2e, groups, ui_lock)
     view       = ChatView()
-    controller = Controller(view, messaging)
+    controller = Controller(view, messaging, ui_lock)
 
     await controller.run()
 

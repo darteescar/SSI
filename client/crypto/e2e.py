@@ -42,9 +42,6 @@ class E2ELayer:
         self._dh_resp_events.clear()
         self._pending_e2e.clear()
 
-    def username(self) -> str | None:
-        return getattr(self._conn, 'username', None)
-
     # ── Prekeys ───────────────────────────────────────────────────────────────
 
     def generate_and_upload_prekeys(self) -> None:

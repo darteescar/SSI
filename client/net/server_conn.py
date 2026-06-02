@@ -9,20 +9,16 @@ Responsabilidades:
 NÃO sabe nada de: utilizadores, E2E, grupos, prekeys.
 """
 
-import base64
 import logging
 import os
 import sys
-import threading
 
 _CLIENT_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PROJECT_DIR = os.path.dirname(_CLIENT_DIR)
 sys.path.insert(0, _CLIENT_DIR)
 sys.path.insert(0, _PROJECT_DIR)
 
-import common.crypto as crypto
 from common.Message import Message
-from common.MsgType import MsgType
 from common.transport import Transport
 from net.secure_channel import SecureChannel
 from net.demultiplexer import Demultiplexer, TAG_RESPONSE

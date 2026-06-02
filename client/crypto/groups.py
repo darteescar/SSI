@@ -45,9 +45,6 @@ class GroupLayer:
     def reset(self) -> None:
         self._mgr.reset()
 
-    def username(self) -> str | None:
-        return getattr(self._conn, 'username', None)
-
     # ── Sender key própria ────────────────────────────────────────────────────
 
     def has_sender_key(self, group_name: str) -> bool:

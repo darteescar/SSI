@@ -94,9 +94,6 @@ class SecureChannel:
         plaintext = AESGCM(key).decrypt(nonce, raw[12:], None)
         return Message.deserialize(plaintext.decode("utf-8"))
 
-    def recv_encrypted_blocking(self) -> Message:
-        return self._recv_encrypted_raw()
-
     def recv_encrypted(self) -> Message:
         return self._recv_encrypted_raw()
 
