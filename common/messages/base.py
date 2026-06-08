@@ -34,6 +34,9 @@ class BaseMessage:
     def get(self, key: str, default=None):
         return self.payload.get(key, default)
 
+    def set(self, key: str, value) -> None:
+        self.payload[key] = value
+
     @property
     def username(self) -> str:   return self.get("username", "")
     @property

@@ -194,13 +194,17 @@ class ConnectionActor:
     # ── API pública ───────────────────────────────────────────────────────────
 
     def request(self, msg: Message) -> Message | None:
-        """Envia msg e bloqueia até receber a resposta. Devolve None se fechado."""
-        msg_id = str(uuid.uuid4())
-        msg.set("msg_id", msg_id)
+        """Envia msg e bloqueia até receber a resposta. Devolve None se fechado.
+
+        Usa _rid (request id) no envelope — distinto do msg_id aplicacional
+        (E2E, grupos), que tem outro significado. O servidor ecoa o _rid na
+        resposta para fazermos o match aqui."""
+        rid = str(uuid.uuid4())
+        msg.set("_rid", rid)
 
         slot = _RequestSlot()
         with self._pending_lock:
-            self._pending[msg_id] = slot
+            self._pending[rid] = slot
 
         frame = msg.serialize().encode("utf-8")
         item  = _QueueItem(frame=frame, slot=slot)
@@ -214,7 +218,7 @@ class ConnectionActor:
                 slot.cond.wait()
 
         with self._pending_lock:
-            self._pending.pop(msg_id, None)
+            self._pending.pop(rid, None)
 
         return slot.result
 
@@ -313,18 +317,18 @@ class ConnectionActor:
     def _dispatch(self, msg: Message) -> None:
         """Encaminha a mensagem para o slot de pedido correcto ou fila de push."""
 
-        # Tenta fazer match com pedido síncrono pelo msg_id
-        msg_id = msg.get("msg_id")
-        if msg_id:
+        # Tenta fazer match com pedido síncrono pelo _rid (request id do envelope)
+        rid = msg.get("_rid")
+        if rid:
             with self._pending_lock:
-                slot = self._pending.get(str(msg_id))
+                slot = self._pending.get(str(rid))
             if slot is not None:
                 with slot.cond:
                     slot.result = msg
                     slot.cond.notify_all()
                 return
 
-        # Mensagem push (sem msg_id correspondente a pedido pendente)
+        # Mensagem push (sem _rid correspondente a pedido pendente)
         tag = _PUSH_TYPE_TO_TAG.get(msg.type, TAG_RESPONSE)
         self._push_queues[tag].put(msg)
 

@@ -1,5 +1,6 @@
 import sys
 import os
+import logging
 
 _SERVER_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PROJECT_DIR = os.path.dirname(_SERVER_DIR)
@@ -10,57 +11,84 @@ from common.transport import Transport
 from common.Message import Message
 from common import crypto
 
+_dh = logging.getLogger("dh")
+
 
 class SecureChannel:
+    """Cifra e decifra mensagens sobre um Transport TCP (lado servidor).
+
+    Responsabilidades únicas:
+    - Handshake DH inicial (responde ao g^x do cliente, deriva dh_shared)
+    - encrypt(bytes) → bytes  (contador s2c + AES-256-GCM)
+    - decrypt(bytes) → Message (contador c2s + AES-256-GCM)
+    - update_key(new_shared) — chamado pela ClientConnection após REKEY
+
+    Direcções invertidas em relação ao cliente: o servidor cifra com s2c e
+    decifra com c2s. NÃO decide quando rekeiar, NÃO coordena threads.
+    """
+
     def __init__(self, transport: Transport):
         self._transport = transport
         self._dh_shared: bytes | None = None
         self._n_send: int = 0
         self._n_recv: int = 0
+        self._gx_bytes: bytes | None = None
+        self._gy_bytes: bytes | None = None
 
-    def establish(self, shared: bytes) -> None:
-        self._dh_shared = shared
+    # ── Handshake ─────────────────────────────────────────────────────────────
+
+    def dh_handshake(self, server_privkey) -> tuple[bytes, bytes]:
+        """STS handshake: recebe g^x, responde com g^y assinado, deriva o segredo.
+        Devolve (gx_bytes, gy_bytes)."""
+        gx_bytes = self._transport.recv()
+
+        dh_priv, gy_bytes = crypto.dh_generate_keypair()
+        sig = crypto.rsa_sign(server_privkey, gx_bytes + gy_bytes)
+        self._transport.send(crypto.mkpair(gy_bytes, sig))
+
+        self._dh_shared = crypto.dh_compute_shared(dh_priv, gx_bytes)
         self._n_send    = 0
         self._n_recv    = 0
-        print(f"[DH] dh_shared={shared[:8].hex()}")
+        self._gx_bytes  = gx_bytes
+        self._gy_bytes  = gy_bytes
+        _dh.info(f"handshake STS concluído com {self._transport.addr} — "
+                 f"segredo partilhado derivado via DH, canal cifrado pronto "
+                 f"(AES-256-GCM, chaves via HKDF-SHA256)")
+        return gx_bytes, gy_bytes
 
-    def update_epoch(self, new_shared: bytes) -> None:
+    def update_key(self, new_shared: bytes) -> None:
+        """Instala nova chave DH após rekey. Repõe contadores."""
         self._dh_shared = new_shared
-        self._n_recv    = 0
         self._n_send    = 0
-        print(f"[REKEY] nova epoch com {self._transport.addr} — dh_shared={new_shared[:8].hex()}")
+        self._n_recv    = 0
 
-    def _key_c2s(self, n: int) -> bytes:
-        return crypto.hkdf_derive(self._dh_shared, f"c2s-msg-{n}".encode())
+    # ── Cifra / Decifra ───────────────────────────────────────────────────────
 
-    def _key_s2c(self, n: int) -> bytes:
-        return crypto.hkdf_derive(self._dh_shared, f"s2c-msg-{n}".encode())
-
-    @staticmethod
-    def _counter_nonce(n: int) -> bytes:
-        return n.to_bytes(12, "big")
-
-    def send(self, msg: Message) -> None:
+    def encrypt(self, msg_bytes: bytes) -> bytes:
+        """Cifra msg_bytes com a chave s2c do próximo contador. Thread-unsafe —
+        deve ser chamado apenas pela thread escritora da ClientConnection."""
         if self._dh_shared is None:
             raise RuntimeError("Canal não estabelecido.")
         self._n_send += 1
-        key   = self._key_s2c(self._n_send)
-        nonce = self._counter_nonce(self._n_send)
-        data  = msg.serialize().encode("utf-8")
-        self._transport.send(crypto.encrypt_counter(key, nonce, data))
+        key   = crypto.hkdf_derive(self._dh_shared, f"s2c-msg-{self._n_send}".encode())
+        nonce = self._n_send.to_bytes(12, "big")
+        return crypto.encrypt_counter(key, nonce, msg_bytes)
 
-    def recv(self) -> Message:
+    def decrypt(self, raw: bytes) -> Message:
+        """Decifra raw com a chave c2s do próximo contador. Thread-unsafe —
+        deve ser chamado apenas pela thread leitora da ClientConnection."""
         if self._dh_shared is None:
             raise RuntimeError("Canal não estabelecido.")
-        raw   = self._transport.recv()
-        nonce = raw[:12]
-        expected = self._counter_nonce(self._n_recv + 1)
+        nonce    = raw[:12]
+        expected = (self._n_recv + 1).to_bytes(12, "big")
         if nonce != expected:
-            raise ValueError(f"Contador de sequência inválido — possível replay.")
+            raise ValueError("Contador de sequência inválido — possível replay.")
         self._n_recv += 1
-        key       = self._key_c2s(self._n_recv)
+        key       = crypto.hkdf_derive(self._dh_shared, f"c2s-msg-{self._n_recv}".encode())
         plaintext = crypto.decrypt_counter(key, raw)
         return Message.deserialize(plaintext.decode("utf-8"))
+
+    # ── Transport ─────────────────────────────────────────────────────────────
 
     def send_raw(self, data: bytes) -> None:
         self._transport.send(data)
@@ -70,3 +98,11 @@ class SecureChannel:
 
     def close(self) -> None:
         self._transport.close()
+
+    # ── Propriedades ──────────────────────────────────────────────────────────
+
+    @property
+    def gx_bytes(self) -> bytes | None: return self._gx_bytes
+
+    @property
+    def gy_bytes(self) -> bytes | None: return self._gy_bytes

@@ -2,6 +2,7 @@ import socket
 import threading
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 _SERVER_DIR  = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SERVER_DIR)
@@ -15,7 +16,8 @@ from app.session import ClientSession
 HOST = "127.0.0.1"
 PORT = 6767
 
-CA_DIR = os.path.join(_SERVER_DIR, "ca")
+CA_DIR      = os.path.join(_SERVER_DIR, "ca")
+POOL_WORKERS = 16   # threads partilhadas para executar pedidos de todos os clientes
 
 
 class Server:
@@ -28,6 +30,7 @@ class Server:
         print(f"[+] Credenciais do servidor carregadas de {CA_DIR}")
 
         self.user_manager = ServerManager()
+        self.pool = ThreadPoolExecutor(max_workers=POOL_WORKERS, thread_name_prefix="ReqPool")
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((HOST, PORT))
@@ -44,12 +47,14 @@ class Server:
                     self.user_manager,
                     self.server_privkey,
                     self.server_cert,
+                    self.pool,
                 )
                 threading.Thread(target=session.run, daemon=True).start()
         except KeyboardInterrupt:
             print("\n[*] Servidor encerrado")
         finally:
             self.server_socket.close()
+            self.pool.shutdown(wait=False)
 
 
 if __name__ == "__main__":
