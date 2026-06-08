@@ -1,5 +1,5 @@
 # SSI (Português)
-Projeto de grupo desenvolvido no âmbito da UC de SSI. O projeto consiste no desenvolvimento de um sistema de conversação com End-to-End Encryption (E2EE). Pode consultar o [enunciado](enunciado.pdf) e o [relatório](report.pdf) para mais detalhes.
+Projeto de grupo desenvolvido no âmbito da UC de SSI. O projeto consiste no desenvolvimento de um sistema de conversação com End-to-End Encryption (E2EE). Pode consultar o [enunciado](others/enunciado.pdf) e o [relatório](others/report.pdf) para mais detalhes.
 
 ## Membros do grupo:
 
@@ -7,7 +7,7 @@ Projeto de grupo desenvolvido no âmbito da UC de SSI. O projeto consiste no des
 * [luis7788](https://github.com/luis7788)
 * [tiagofigueiredo7](https://github.com/tiagofigueiredo7)
 
-### Nota Final: ?? / 20 ⭐️
+### Nota Final: 18.17 / 20 ⭐️
 
 ## Dependências
 
@@ -31,16 +31,8 @@ Em seguida, para iniciar um cliente, execute o seguinte comando:
 python3 client.py
 ```
 
-### Credenciais de acesso 
-
-| Identificador | Password   
-|---------------|------------
-| `a`       | `123` 
-| `b`       | `123` 
-| `c`       | `123` 
-
 # SSI (English)
-Group project developed in the scope of the SSI course. The project consists of developing a conversation system with End-to-End Encryption (E2EE). You can consult the [statement](enunciado.pdf) and the [report](report.pdf) for more details.         
+Group project developed in the scope of the SSI course. The project consists of developing a conversation system with End-to-End Encryption (E2EE). You can consult the [statement](others/enunciado.pdf) and the [report](others/report.pdf) for more details.         
 
 ## Group members:
 
@@ -48,7 +40,7 @@ Group project developed in the scope of the SSI course. The project consists of 
 * [luis7788](https://github.com/luis7788)
 * [tiagofigueiredo7](https://github.com/tiagofigueiredo7)
 
-### Final Grade: ?? / 20 ⭐️
+### Final Grade: 18.17 / 20 ⭐️
 
 ## Dependencies
 
@@ -71,12 +63,3 @@ Then, to start a client, run the following command:
 ```bash
 python3 client.py
 ```
-
-### Access credentials
-
-| Identifier | Password   
-|---------------|------------
-| `a`       | `123` 
-| `b`       | `123` 
-| `c`       | `123`
-
